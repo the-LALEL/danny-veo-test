@@ -5,7 +5,6 @@ import getpass
 import json
 import logging
 import os
-import re
 import sys
 import time
 import uuid
@@ -25,6 +24,8 @@ SDM_ROOT = "https://smartdevicemanagement.googleapis.com/v1"
 TOKEN_URL = "https://www.googleapis.com/oauth2/v4/token"
 PCM_BASE = "https://nestservices.google.com/partnerconnections"
 GOOGLE_REDIRECT = "https://www.google.com"
+DEVICE_ACCESS_CONSOLE = "https://console.nest.google.com/device-access/project-list"
+OAUTH_CLIENTS_CONSOLE = "https://console.cloud.google.com/auth/clients?project=chatgpt-doorbell-bridge"
 
 GENERATE = "sdm.devices.commands.CameraLiveStream.GenerateWebRtcStream"
 STOP = "sdm.devices.commands.CameraLiveStream.StopWebRtcStream"
@@ -44,6 +45,24 @@ def safe_json_write(path: Path, obj):
 
 def media_order(sdp: str):
     return [ln[2:].split()[0] for ln in sdp.splitlines() if ln.startswith("m=")]
+
+def media_payload_types(sdp: str):
+    result = {}
+    for line in sdp.splitlines():
+        if not line.startswith("m="):
+            continue
+        parts = line[2:].split()
+        if len(parts) < 4:
+            continue
+        kind = parts[0]
+        pts = set()
+        for token in parts[3:]:
+            try:
+                pts.add(int(token))
+            except ValueError:
+                pass
+        result[kind] = pts
+    return result
 
 def normalize_nest_answer_sdp(answer_sdp: str):
     """
@@ -130,8 +149,12 @@ def obtain_access_token():
     client_secret = os.environ.get("NEST_CLIENT_SECRET", "").strip()
 
     if not project_id:
+        print("\nDevice Access project list:")
+        print(DEVICE_ACCESS_CONSOLE)
         project_id = input("Existing Device Access Project ID (UUID): ").strip()
     if not client_id:
+        print("\nOAuth client credentials for the existing Google Cloud project:")
+        print(OAUTH_CLIENTS_CONSOLE)
         client_id = input("Existing OAuth client ID: ").strip()
     if not client_secret:
         client_secret = getpass.getpass("Existing OAuth client secret (hidden): ").strip()
@@ -317,27 +340,63 @@ class Instrumentation:
             "connection_states": self.connection_states,
         }
 
-def classify_failure(inst: Instrumentation, got_video_track: bool):
+def classify_failure(inst: Instrumentation, got_video_track: bool, video_payload_types=None):
     c = inst.counts
+    video_payload_types = set(video_payload_types or [])
+
     if not inst.wire:
         return "NO_RTP_AT_ICE_BOUNDARY"
+
+    wire_video = sum(
+        count for (_ssrc, pt), count in inst.wire.items()
+        if pt in video_payload_types
+    ) if video_payload_types else None
+
+    routed_video = sum(
+        count for (_ssrc, pt), count in inst.routed.items()
+        if pt in video_payload_types
+    ) if video_payload_types else None
+
+    dropped_video = sum(
+        count for (_ssrc, pt), count in inst.dropped.items()
+        if pt in video_payload_types
+    ) if video_payload_types else None
+
+    if video_payload_types and wire_video == 0:
+        return "NO_VIDEO_RTP_AT_ICE_BOUNDARY"
+
     if c["srtp_unprotect_failures"] > 0 and not inst.routed and not inst.dropped:
         return "SRTP_UNPROTECT_FAILURE"
+
     if c["rtp_parse_failures"] > 0 and not inst.routed and not inst.dropped:
         return "RTP_PARSE_FAILURE"
-    if inst.dropped and not inst.routed:
+
+    if video_payload_types and dropped_video and not routed_video:
+        return "VIDEO_RTP_ROUTER_MAPPING_FAILURE"
+
+    if not video_payload_types and inst.dropped and not inst.routed:
         return "RTP_ROUTER_MAPPING_FAILURE"
-    video_receiver_packets = sum(v for (kind, _ssrc, _pt), v in inst.receiver.items() if kind == "video")
+
+    video_receiver_packets = sum(
+        v for (kind, _ssrc, _pt), v in inst.receiver.items()
+        if kind == "video"
+    )
+
     if video_receiver_packets and c["payload_parse_failures"] > 0 and c["video_encoded_frames"] == 0:
         return "H264_DEPAYLOAD_FAILURE"
+
     if video_receiver_packets and c["video_encoded_frames"] == 0:
         return "VIDEO_FRAME_ASSEMBLY_OR_KEYFRAME_FAILURE"
+
     if c["video_encoded_frames"] > 0 and c["h264_decode_calls"] == 0:
         return "DECODER_QUEUE_OR_THREAD_FAILURE"
+
     if c["h264_decode_calls"] > 0 and c["h264_decoded_frames"] == 0:
         return "H264_DECODE_FAILURE"
+
     if not got_video_track:
         return "NO_VIDEO_TRACK"
+
     return "INDETERMINATE_MEDIA_FAILURE"
 
 async def wait_ice_complete(pc, timeout=20):
@@ -380,6 +439,7 @@ async def live_run(base_dir: Path):
     frame_received_at = None
     generate_requested_at = None
     answer_applied_at = None
+    remote_payload_types = {}
 
     @pc.on("connectionstatechange")
     async def connection_state():
@@ -444,7 +504,9 @@ async def live_run(base_dir: Path):
             raise RuntimeError("GenerateWebRtcStream response missing answerSdp/mediaSessionId")
 
         fixed, normalized, dropped_non_udp = normalize_nest_answer_sdp(answer)
+        remote_payload_types = media_payload_types(fixed)
         print(f"NEST SDP FIXED: normalized={normalized}, dropped_non_udp={dropped_non_udp}")
+        print("REMOTE VIDEO PAYLOAD TYPES:", sorted(remote_payload_types.get("video", set())))
 
         if time.monotonic() - t0 >= 25:
             raise RuntimeError("Nest answer too old before application")
@@ -472,7 +534,11 @@ async def live_run(base_dir: Path):
             status = 0
             print(f"CAPTURE OK: request_id={request_id} {image.width}x{image.height}")
         else:
-            failure_code = classify_failure(inst, got_video_track)
+            failure_code = classify_failure(
+                inst,
+                got_video_track,
+                remote_payload_types.get("video", set()),
+            )
             print("CAPTURE FAILED:", failure_code)
 
     finally:
@@ -501,6 +567,7 @@ async def live_run(base_dir: Path):
             "failure_code": failure_code,
             "stop_webrtc_stream_ok": stop_ok,
             "image_path": str(image_path) if status == 0 and image_path.is_file() else None,
+            "remote_video_payload_types": sorted(remote_payload_types.get("video", set())),
             "instrumentation": inst.report(),
         }
         safe_json_write(report_path, report)
@@ -521,6 +588,9 @@ def self_test():
     assert "a=candidate:nest1 1 udp " in fixed
     assert " tcp " not in fixed.lower()
     assert fixed.endswith("\r\n")
+    pts = media_payload_types("m=audio 9 UDP/TLS/RTP/SAVPF 111\r\nm=video 9 UDP/TLS/RTP/SAVPF 102 121\r\n")
+    assert pts["audio"] == {111}
+    assert pts["video"] == {102, 121}
     url = build_pcm_url("proj", "client.apps.googleusercontent.com")
     assert "partnerconnections/proj/auth" in url
     assert "access_type=offline" in url
@@ -540,7 +610,7 @@ def self_test():
     assert classify_failure(x, False) == "NO_RTP_AT_ICE_BOUNDARY"
     x.wire[(1, 102)] = 3
     x.dropped[(1, 102)] = 3
-    assert classify_failure(x, True) == "RTP_ROUTER_MAPPING_FAILURE"
+    assert classify_failure(x, True, {102}) == "VIDEO_RTP_ROUTER_MAPPING_FAILURE"
     print("SELF-TEST PASS")
     return 0
 
