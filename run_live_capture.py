@@ -55,20 +55,56 @@ def validate_request():
     return request, request_id, requested_at
 
 
+class BridgeConfigError(ValueError):
+    """Only fixed diagnostic codes and field names may leave this validator."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 def load_bridge_config():
     raw = os.environ.get("NEST_BRIDGE_CONFIG", "")
-    if not raw:
-        raise ValueError("NEST_BRIDGE_CONFIG secret is not configured")
-    config = json.loads(raw)
+    if not raw.strip():
+        raise BridgeConfigError(
+            "BRIDGE_CONFIG_NOT_SUPPLIED",
+            "NEST_BRIDGE_CONFIG is empty or unavailable to this workflow; no Nest API request was made",
+        )
+    try:
+        config = json.loads(raw)
+    except (ValueError, TypeError):
+        # Do not include the JSON decoder exception: it can expose secret data.
+        raise BridgeConfigError(
+            "BRIDGE_CONFIG_INVALID_JSON",
+            "NEST_BRIDGE_CONFIG is present but is not valid JSON",
+        ) from None
     if not isinstance(config, dict):
-        raise ValueError("NEST_BRIDGE_CONFIG must be a JSON object")
-    required = ["client_id", "refresh_token"]
-    missing = [key for key in required if not str(config.get(key, "")).strip()]
+        raise BridgeConfigError(
+            "BRIDGE_CONFIG_NOT_OBJECT",
+            "NEST_BRIDGE_CONFIG must be a JSON object, not a string, array, or scalar",
+        )
+
+    fields = ("client_id", "client_secret", "refresh_token", "device_name", "enterprise_id")
+    invalid = [key for key in fields if key in config and not isinstance(config[key], str)]
+    if invalid:
+        raise BridgeConfigError(
+            "BRIDGE_CONFIG_INVALID_FIELD_TYPE",
+            "These configuration fields must be strings: " + ", ".join(invalid),
+        )
+    cleaned = {key: config.get(key, "").strip() for key in fields}
+    missing = [key for key in ("client_id", "refresh_token") if not cleaned[key]]
     if missing:
-        raise ValueError("NEST_BRIDGE_CONFIG is missing required fields")
-    if not str(config.get("device_name", "")).strip() and not str(config.get("enterprise_id", "")).strip():
-        raise ValueError("NEST_BRIDGE_CONFIG needs device_name or enterprise_id")
-    return config
+        raise BridgeConfigError(
+            "BRIDGE_CONFIG_MISSING_FIELDS",
+            "Required configuration fields are empty or absent: " + ", ".join(missing),
+        )
+    if not cleaned["device_name"] and not cleaned["enterprise_id"]:
+        raise BridgeConfigError(
+            "BRIDGE_CONFIG_MISSING_DEVICE_SELECTOR",
+            "NEST_BRIDGE_CONFIG needs device_name or enterprise_id",
+        )
+    return cleaned
 
 
 def main():
@@ -78,14 +114,15 @@ def main():
     try:
         request, request_id, requested_at = validate_request()
     except Exception:
-        # A malformed request is not allowed to select arbitrary output paths.
         fallback_id = str(uuid.uuid4())
         return write_failure(fallback_id, "request_validation", "INVALID_REQUEST", "Doorbell request file is invalid")
 
     try:
         config = load_bridge_config()
+    except BridgeConfigError as exc:
+        return write_failure(request_id, "configuration", exc.code, exc.message)
     except Exception:
-        return write_failure(request_id, "configuration", "INVALID_BRIDGE_CONFIG", "Secure Nest bridge configuration is missing or invalid")
+        return write_failure(request_id, "configuration", "BRIDGE_CONFIG_VALIDATION_ERROR", "Unexpected configuration validation error; no secret values were reported")
 
     env = os.environ.copy()
     mapping = {
@@ -96,7 +133,7 @@ def main():
         "device_name": "NEST_DEVICE_NAME",
     }
     for config_key, env_key in mapping.items():
-        value = str(config.get(config_key, "")).strip()
+        value = config.get(config_key, "")
         if value:
             env[env_key] = value
 
