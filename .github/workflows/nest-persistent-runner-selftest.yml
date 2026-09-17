@@ -1,0 +1,54 @@
+name: Nest Persistent Runner Self-Test
+
+on:
+  push:
+    branches: [doorbell-media-preflight]
+    paths:
+      - nest_persistent_runner.py
+      - cloudshell_nest_persistent.sh
+      - .github/workflows/nest-persistent-runner-selftest.yml
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependency
+        run: python -m pip install --disable-pip-version-check requests==2.32.5
+      - name: Shell syntax
+        run: bash -n cloudshell_nest_persistent.sh
+      - name: Python syntax
+        run: python -m py_compile nest_persistent_runner.py
+      - name: Runner self-test
+        run: python nest_persistent_runner.py --self-test
+      - name: Credential classification tests
+        run: |
+          python - <<'PY'
+          import nest_persistent_runner as m
+
+          original = m.token_request
+          try:
+              m.token_request = lambda form, timeout=20: (400, {"error": "invalid_grant"})
+              assert m.validate_client_pair("client", "matching-secret") is True
+
+              m.token_request = lambda form, timeout=20: (401, {"error": "invalid_client"})
+              assert m.validate_client_pair("client", "wrong-secret") is False
+
+              m.token_request = lambda form, timeout=20: (400, {"error": "invalid_request"})
+              try:
+                  m.validate_client_pair("client", "secret")
+              except RuntimeError as exc:
+                  assert "unexpected HTTP 400" in str(exc)
+              else:
+                  raise AssertionError("unexpected OAuth errors must fail closed")
+          finally:
+              m.token_request = original
+
+          print("CREDENTIAL CLASSIFICATION TEST PASS")
+          PY
+      - name: Confirm pinned media diagnostic
+        run: grep -F 'MEDIA_REF="f3f8806b97a86ac704425d54ac99465d30071cbc"' cloudshell_nest_persistent.sh

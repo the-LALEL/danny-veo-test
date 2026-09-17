@@ -1,0 +1,43 @@
+name: Nest Real Diagnostic Self-Test
+
+on:
+  push:
+    branches:
+      - doorbell-media-preflight
+    paths:
+      - "nest_real_diagnostic.py"
+      - "cloudshell_nest_diagnostic.sh"
+      - "tests/test_nest_real_diagnostic.py"
+      - ".github/workflows/nest-real-diagnostic-selftest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned diagnostic runtime
+        run: |
+          python -m pip install --disable-pip-version-check \
+            aiortc==1.14.0 \
+            aioice==0.10.1 \
+            av==16.0.1 \
+            requests==2.32.5 \
+            Pillow==11.3.0
+
+      - name: Shell syntax
+        run: bash -n cloudshell_nest_diagnostic.sh
+
+      - name: Runtime self-test
+        run: python nest_real_diagnostic.py --self-test
+
+      - name: Mocked contract and safety tests
+        run: python -m unittest -v tests/test_nest_real_diagnostic.py

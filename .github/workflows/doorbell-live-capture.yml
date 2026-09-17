@@ -1,0 +1,97 @@
+name: Doorbell Live Capture
+
+on:
+  push:
+    branches:
+      - doorbell-media-preflight
+    paths:
+      - doorbell_request.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nest-doorbell-live-capture
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out capture client
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned media dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            aiortc==1.15.0 \
+            av==17.1.0 \
+            Pillow==12.3.0 \
+            cryptography==50.0.1
+
+      - name: Validate capture source
+        run: python -m py_compile nest_capture.py run_live_capture.py package_result.py
+
+      - name: Capture one fresh Nest frame
+        id: capture
+        continue-on-error: true
+        env:
+          NEST_BRIDGE_CONFIG: ${{ secrets.NEST_BRIDGE_CONFIG }}
+        run: python run_live_capture.py
+
+      - name: Encrypt correlated result
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          request = json.loads(Path('doorbell_request.json').read_text(encoding='utf-8'))
+          request_id = request['request_id']
+          result_path = Path('artifacts/live-plaintext') / f'{request_id}.json'
+          image_path = Path('artifacts/live-plaintext') / f'{request_id}.png'
+
+          if not result_path.exists():
+              raise SystemExit('No correlated result file exists')
+
+          cmd = [
+              sys.executable,
+              'package_result.py',
+              '--request', 'doorbell_request.json',
+              '--result', str(result_path),
+              '--out', 'artifacts/live-sealed',
+          ]
+          if image_path.exists():
+              cmd += ['--image', str(image_path)]
+          subprocess.run(cmd, check=True)
+          PY
+          rm -rf artifacts/live-plaintext
+
+      - name: Upload encrypted result only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: doorbell-live-result
+          path: artifacts/live-sealed/
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Propagate capture status
+        if: always()
+        run: |
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          path = Path('artifacts/live-capture-exit-code.txt')
+          code = int(path.read_text().strip()) if path.exists() else 3
+          raise SystemExit(code)
+          PY
