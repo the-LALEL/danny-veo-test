@@ -292,3 +292,17 @@ Only introduce a new worker when it eliminates a real blocker or shortens the cr
 - Reconsider the route only when new evidence materially contradicts it or a concrete blocker requires a branch.
 - Do not keep comparing providers, architectures, or plugins after the critical path is known.
 - Prefer progress-producing experiments over additional meta-analysis.
+
+
+## OAuth recovery search — 2026-09-17 evening
+
+- Live Google Drive search found several folders named `Credentials`, but their contents were empty through the Drive API.
+- Targeted Drive searches for `client_secret`, `credentials`, `oauth`, `client`, `secret`, `tokens`, `nest`, `doorbell`, and the known OAuth client/project identifiers found no usable Nest OAuth client JSON or preserved secret.
+- Gmail searches for the known client ID, Doorbell project name, `client_secret_`, and likely credential filenames found no usable Nest OAuth credential material.
+- Unrelated credential/password backups were intentionally not inspected because they are not evidence for this project and would add unnecessary risk/noise.
+
+### Consequence
+
+Treat the original OAuth client secret as unavailable. Do not spend more time searching storage for it.
+
+Next action is to use the existing Google Auth Platform Web OAuth client and add/rotate a new client secret, preserving the same client ID linked to the Device Access project. Then reauthorize and immediately run the preserved real-device packet probe.
