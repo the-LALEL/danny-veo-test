@@ -168,3 +168,21 @@ A stale image or a partial technical success never counts as completion.
 ### Consequence
 
 Do not keep retrying blocked automation tools with cosmetically different prompts. Use them for research, inventory, and non-camera support work where allowed. The remaining unavoidable external boundary is still Google account/OAuth access, followed by the already-narrow real media diagnosis.
+
+
+## Media-worker refinement — 2026-09-17
+
+- Upstream go2rtc issue **#2386** / PR **#2480** documents a current Nest SDM/WebRTC failure with a real wired Nest Doorbell: Google can answer with multiple H264 payload types and transmit on a different one than the cold consumer initially binds to. The cold consumer then sees a valid connection but zero video bytes while a sibling receiver receives the real stream. PR #2480 is open, not merged, as of this check.
+- The go2rtc case specifically reports Google transmitting H264 High profile `profile-level-id=64001f` on PT 98.
+- aiortc 1.15 does **not** advertise H264 High profile by default; its built-in H264 capabilities are `42001f` and `42e01f`. Therefore do **not** assume the go2rtc root cause transfers literally to this client.
+- aiortc's receiver registers every codec that survives `find_common_codecs()`, maps packets by payload type, and routes a previously unseen SSRC to a receiver when exactly one receiver is registered for that payload type.
+- The preserved `doorbell_packet_probe.sh` hooks remain structurally compatible with current aiortc/aioice source:
+  - `aioice.Connection.recvfrom(self)`
+  - `RtpRouter.register_receiver(self, receiver, ssrcs, payload_types, mid=None)`
+  - `RtpRouter.route_rtp(self, packet)`
+- Therefore the preserved packet probe remains the preferred next real-session diagnostic. It can distinguish:
+  1. no RTP packets arrive;
+  2. packets arrive on a payload type the receiver did not register;
+  3. packets are router-dropped;
+  4. packets route successfully but frame assembly/decode still fails.
+- The exact real-session Nest answer SDP/profile from the earlier Cloud Shell run was not recovered. Do not infer its payload/profile values from the go2rtc report.
