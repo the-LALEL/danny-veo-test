@@ -1,6 +1,9 @@
 import os
+import stat
+import tempfile
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import nest_capture
 
@@ -104,6 +107,40 @@ class NestCaptureTests(unittest.TestCase):
             name, source = nest_capture.resolve_device_name("token")
         self.assertEqual(name, "enterprises/p/devices/doorbell")
         self.assertEqual(source, "unique_webrtc_doorbell")
+
+    def test_request_id_is_canonicalized_and_path_input_rejected(self):
+        value = "A4B3E3F2-917F-4D27-BF9C-60EFC2A82388"
+        self.assertEqual(nest_capture.resolve_request_id(value), value.lower())
+        with self.assertRaises(nest_capture.CaptureError) as ctx:
+            nest_capture.resolve_request_id("../../stale-image")
+        self.assertEqual(ctx.exception.code, "INVALID_REQUEST_ID")
+
+    def test_result_file_is_private(self):
+        if os.name == "nt":
+            self.skipTest("POSIX permission bits are not authoritative on Windows")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "result.json"
+            nest_capture._write_result(path, {"success": False})
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+
+class NestCaptureAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_reused_request_removes_stale_image(self):
+        request_id = "a4b3e3f2-917f-4d27-bf9c-60efc2a82388"
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            stale_image = out / f"{request_id}.png"
+            stale_image.write_bytes(b"old pixels")
+            with patch.dict(os.environ, {"DOORBELL_REQUEST_ID": request_id}, clear=True), patch.object(
+                nest_capture,
+                "capture_one_frame",
+                AsyncMock(side_effect=nest_capture.CaptureError("authentication", "TEST", "failed")),
+            ):
+                status = await nest_capture.async_main(out)
+            self.assertEqual(status, 2)
+            self.assertFalse(stale_image.exists())
+            result = out / f"{request_id}.json"
+            self.assertTrue(result.exists())
 
 
 if __name__ == "__main__":
