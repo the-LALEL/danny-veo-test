@@ -218,3 +218,67 @@ Choose the plugin by missing capability:
 6. need codebase changes -> GitHub/canonical branch first.
 
 Do not switch providers just because a plugin exists.
+
+
+## Expanded plugin landscape — 2026-09-17 evening
+
+The available automation surface materially expanded. Do not assume the earlier limited tool inventory.
+
+### Newly important connected workers
+
+- **Base44 — installed.** This is the biggest new capability. It exposes:
+  - AI app creation/editing;
+  - a real sandbox shell via `run_command`;
+  - file read/write/edit/grep/list tools;
+  - checkpoints;
+  - entity/database operations;
+  - OAuth connector discovery/connection.
+  It can function as an autonomous engineering workspace, not merely a hosting target.
+
+- **Floot — installed.** Full-stack project builder with direct code/file tools, resource/credential discovery, auth/database/storage/deploy capabilities.
+
+- **Manus — installed.** Autonomous task delegation for research/websites/apps. Use as a bounded subagent where its supported task type fits; do not treat it as a Google-auth bypass.
+
+- **Replit — installed.** AI builder/hosting worker; camera-specific build attempts were previously blocked by platform safety, but it remains useful for non-camera support/control work.
+
+- **Netlify — installed.**
+- **Convex — installed.**
+- **Tavily AI — installed.**
+- **Exa — installed.**
+- **Coda — installed.**
+- **GSC Wizard — installed.**
+
+### Existing important workers still available
+
+- GitHub
+- AppDeploy
+- Railway
+- Supabase
+- Vercel
+- Firecrawl
+- Parallel Search
+- TinyFish
+- Opera Browser Connector
+- Gmail
+- Google Drive
+
+### Important absent / not yet connected
+
+- No purpose-built Google Cloud / GCP / Secret Manager / Cloud Shell plugin surfaced in current directory searches.
+- **Remote Desktop Commander** exists but is not installed.
+- **DigitalOcean** exists but is not installed.
+- **Render** exists but is not installed.
+- **Hatchable** exists but is not installed.
+- Exact `WebMCP` plugin search still returns no plugin under that name.
+
+### Operating consequence
+
+Do not get stuck on a single provider. Prefer a worker decomposition:
+- authenticated-account/browser work → whichever connected browser/computer operator is actually authenticated;
+- coding/sandbox experimentation → Base44 or Floot first, then GitHub;
+- Python/media runtime → Railway/appropriate container host;
+- research/debugging → Firecrawl + Parallel Search + Exa/Tavily;
+- ChatGPT-facing state/control → Supabase/Convex/AppDeploy only if needed;
+- image return → Gmail remains a concrete candidate.
+
+Only introduce a new worker when it eliminates a real blocker or shortens the critical path.
