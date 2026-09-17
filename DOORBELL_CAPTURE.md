@@ -1,6 +1,6 @@
 # Nest Doorbell capture core
 
-This branch intentionally implements only **Milestone A: obtain one genuinely fresh Nest Doorbell image**.
+This branch intentionally implements only **Milestone A: obtain one current-session Nest Doorbell image**.
 It does not yet implement delivery of that image to ChatGPT.
 
 ## Reused existing state
@@ -28,6 +28,8 @@ Select the existing doorbell with either:
 
 `NEST_ENTERPRISE_ID` remains accepted as a compatibility alias for the experimental branch.
 
+`DOORBELL_REQUEST_ID`, when supplied, must be a UUID. Reusing an ID first removes any correlated old PNG/JSON so a failed new capture cannot accidentally leave stale imagery looking current.
+
 ## OAuth-client diagnostic
 
 Before repeating a Nest consent flow, the existing client-ID/client-secret pair can be checked without calling the Nest API:
@@ -36,7 +38,7 @@ Before repeating a Nest consent flow, the existing client-ID/client-secret pair 
 python nest_capture.py --probe-oauth-client
 ```
 
-A valid client pair is recognized when Google accepts the client identity and rejects only the deliberately invalid authorization code (`invalid_grant`). A rejected client identity is reported as `OAUTH_CLIENT_MISMATCH`.
+The probe deliberately supplies an invalid authorization code. `invalid_grant` means Google got past client authentication to grant validation; `invalid_client`/HTTP 401 is reported as `OAUTH_CLIENT_MISMATCH`.
 
 ## One-shot capture
 
@@ -52,10 +54,18 @@ Then run:
 python nest_capture.py
 ```
 
-Success creates a correlated PNG plus JSON metadata under `artifacts/real-capture/`. The metadata includes request, stream-command, SDP-application, and frame-receipt timestamps so a frame received before the current capture request cannot be presented as fresh.
+Success creates a correlated PNG plus JSON metadata under `artifacts/real-capture/`. The output directory is restricted to the current user where POSIX permissions are available, and image/result files are written as owner-only.
+
+The metadata includes request, stream-command, SDP-application, and frame-receipt timestamps. A successful result proves that the decoded frame was received from a live WebRTC session created after the current request. Nest does not provide a camera-sensor exposure timestamp through this path, so the metadata explicitly records `camera_sensor_capture_time_proven: false` rather than overstating that evidence.
 
 ## Failure boundary
 
-The command deliberately identifies the stage of failure: authentication, configuration, device discovery, Nest API command, SDP generation/validation, WebRTC negotiation, media receipt, frame decode, freshness, or image creation.
+The command deliberately identifies the stage of failure: request validation, authentication, configuration, device discovery, Nest API command, SDP generation/validation, WebRTC negotiation, media receipt, frame decode, freshness, or image creation.
 
 No ChatGPT transport, database, queue, public image URL, encryption envelope, or persistent runner is part of this capture core. Those should be selected only after a real Nest frame succeeds reliably.
+
+## Live smoke test
+
+`.github/workflows/doorbell-live-smoke.yml` is manual-only. It expects a repository secret named `NEST_BRIDGE_CONFIG`, attempts one real capture, uploads nothing, and deletes any camera pixels before the ephemeral runner exits.
+
+The repository does not currently expose that secret to the workflow. Therefore the present live-smoke result is `BRIDGE_CONFIG_NOT_SUPPLIED`; no Nest API request is made in that state.
