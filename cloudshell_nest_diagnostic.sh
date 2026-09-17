@@ -19,7 +19,7 @@ fi
 "${VENV}/bin/python" -m pip install --disable-pip-version-check --quiet \
   "aiortc==1.14.0" \
   "aioice==0.10.1" \
-  "av==14.4.0" \
+  "av==16.0.1" \
   "requests==2.32.5" \
   "Pillow==11.3.0"
 
