@@ -306,3 +306,17 @@ Only introduce a new worker when it eliminates a real blocker or shortens the cr
 Treat the original OAuth client secret as unavailable. Do not spend more time searching storage for it.
 
 Next action is to use the existing Google Auth Platform Web OAuth client and add/rotate a new client secret, preserving the same client ID linked to the Device Access project. Then reauthorize and immediately run the preserved real-device packet probe.
+
+
+## Floot OAuth worker test — 2026-09-17
+
+- Created Floot project `Doorbell Bridge Workbench` for autonomous support work.
+- Floot exposes a managed `google-integration` OAuth resource in principle.
+- Provision attempt returned: `google-integration is beta-gated and not available for this account`.
+- Therefore Floot cannot currently replace Opera/TinyFish for authenticated Google Cloud access on this account.
+- Do not retry this route unless the account's Floot beta entitlement changes.
+
+### Browser/operator recheck
+
+- Fresh plugin-directory searches for Browserbase/Playwright/Google Cloud/Cloud Shell/browser MCP did not surface a newly connected Google Cloud operator.
+- Current usable browser operators remain Opera Browser Connector and TinyFish; Opera is disconnected and TinyFish's authenticated Google-console workflow is platform-blocked.
