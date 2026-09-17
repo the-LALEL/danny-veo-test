@@ -104,8 +104,8 @@ class DiagnosticTests(unittest.TestCase):
         inst.wire[(100, 102)] = 5
         inst.dropped[(100, 102)] = 5
         self.assertEqual(
-            diag.classify_failure(inst, True),
-            "RTP_ROUTER_MAPPING_FAILURE",
+            diag.classify_failure(inst, True, {102}),
+            "VIDEO_RTP_ROUTER_MAPPING_FAILURE",
         )
 
     def test_failure_classifier_decode(self):
@@ -117,8 +117,18 @@ class DiagnosticTests(unittest.TestCase):
         inst.counts["h264_decode_calls"] = 1
         inst.counts["h264_decoded_frames"] = 0
         self.assertEqual(
-            diag.classify_failure(inst, True),
+            diag.classify_failure(inst, True, {102}),
             "H264_DECODE_FAILURE",
+        )
+
+    def test_failure_classifier_detects_audio_only(self):
+        inst = diag.Instrumentation()
+        inst.wire[(100, 111)] = 5
+        inst.routed[(100, 111)] = 5
+        inst.receiver[("audio", 100, 111)] = 5
+        self.assertEqual(
+            diag.classify_failure(inst, True, {102}),
+            "NO_VIDEO_RTP_AT_ICE_BOUNDARY",
         )
 
 
