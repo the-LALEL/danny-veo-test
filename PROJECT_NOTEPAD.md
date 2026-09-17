@@ -186,3 +186,35 @@ Do not keep retrying blocked automation tools with cosmetically different prompt
   3. packets are router-dropped;
   4. packets route successfully but frame assembly/decode still fails.
 - The exact real-session Nest answer SDP/profile from the earlier Cloud Shell run was not recovered. Do not infer its payload/profile values from the go2rtc report.
+
+
+## Expanded plugin landscape — 2026-09-17
+
+The available plugin set materially improved. Use plugins as bounded workers, not as competing architectures.
+
+### Strong installed workers
+
+- **Base44**: strongest new general-purpose sandbox candidate. It exposes a shell-backed app sandbox, file editing, checkpoints, OAuth connectors, and deployment. There are currently no existing Base44 apps, so using it would require creating a fresh workspace. Test it first for Python/pip/FFmpeg/network capability before considering it as the media worker.
+- **Floot**: strong full-stack control-plane builder with code/file/resource tools and VM execution, but its dependency guidance explicitly discourages native packages and large binaries such as FFmpeg. Prefer it for orchestration/control surfaces, not the aiortc/PyAV media engine unless proven otherwise.
+- **Manus**: autonomous project/research/website delegation. Useful as a bounded research/build subagent; not currently exposed as a general terminal/container worker.
+- **Netlify / Vercel / AppDeploy**: useful for web control planes, callbacks, OAuth setup pages, API endpoints, and secret/config management. Do not assume they can host the Python/PyAV media engine.
+- **Convex / Supabase**: useful for state, coordination, auth, and invocation metadata. Avoid adding them unless persistence/coordination becomes a real missing capability.
+- **Railway**: remains a plausible Python/container media host, but prior camera-related automation calls hit platform safety checks. Do not repeatedly retry blocked mutations without a materially different route.
+
+### Available but not currently installed
+
+- **Remote Desktop Commander**: authorized machine filesystem/terminal control. Potentially useful if a user-controlled machine becomes the chosen runtime, but it was previously suggested/dismissed; do not nag the user about it.
+- **DigitalOcean**: remote Codex workspace provisioning. Potential media-host candidate if a clean remote Linux runtime becomes necessary.
+- **Render / Hatchable / Lovable / Webflow**: additional hosting/build options; lower priority until a concrete capability gap appears.
+
+### Plugin selection rule
+
+Choose the plugin by missing capability:
+1. need authenticated browser/account state -> browser connector;
+2. need native Python/FFmpeg/WebRTC -> shell/container host;
+3. need OAuth callback/control UI -> web control-plane builder;
+4. need persistent request state -> Convex/Supabase only if required;
+5. need broad research -> Parallel Search / Firecrawl / Manus;
+6. need codebase changes -> GitHub/canonical branch first.
+
+Do not switch providers just because a plugin exists.
