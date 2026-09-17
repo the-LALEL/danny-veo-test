@@ -1,19 +1,12 @@
 import asyncio
+import hashlib
 import json
 import os
 import re
-import time
 from fractions import Fraction
 
 import numpy as np
-from aiortc import (
-    AudioStreamTrack,
-    MediaStreamTrack,
-    RTCConfiguration,
-    RTCIceServer,
-    RTCPeerConnection,
-    RTCRtpSender,
-)
+from aiortc import AudioStreamTrack, MediaStreamTrack, RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCRtpSender
 from av import VideoFrame
 
 
@@ -23,7 +16,6 @@ class SyntheticVideoTrack(MediaStreamTrack):
     def __init__(self):
         super().__init__()
         self._timestamp = 0
-        self._started = time.monotonic()
 
     async def recv(self):
         await asyncio.sleep(1 / 30)
@@ -41,11 +33,19 @@ class SyntheticVideoTrack(MediaStreamTrack):
 
 
 def media_order(sdp: str):
-    return [line[2:] for line in sdp.splitlines() if line.startswith("m=")]
+    return [line[2:].split()[0] for line in sdp.splitlines() if line.startswith("m=")]
 
 
-def h264_lines(sdp: str):
-    return [line for line in sdp.splitlines() if "H264" in line.upper()]
+def media_sections(sdp: str):
+    sections = {}
+    current = None
+    for line in sdp.splitlines():
+        if line.startswith("m="):
+            current = line[2:].split()[0]
+            sections[current] = [line]
+        elif current:
+            sections[current].append(line)
+    return {k: "\n".join(v) for k, v in sections.items()}
 
 
 def candidate_types(sdp: str):
@@ -58,25 +58,40 @@ def candidate_types(sdp: str):
     return sorted(types)
 
 
+def validate_nest_offer(sdp: str):
+    sections = media_sections(sdp)
+    audio = sections.get("audio", "")
+    video = sections.get("video", "")
+    application = sections.get("application", "")
+    checks = {
+        "media_order_audio_video_application": media_order(sdp) == ["audio", "video", "application"],
+        "audio_recvonly": bool(re.search(r"(?m)^a=recvonly$", audio)),
+        "video_recvonly": bool(re.search(r"(?m)^a=recvonly$", video)),
+        "audio_offers_opus": bool(re.search(r"(?im)^a=rtpmap:\d+\s+opus/48000(?:/2)?$", audio)),
+        "video_offers_h264": "H264/90000" in video.upper(),
+        "h264_packetization_mode_1": "packetization-mode=1" in video,
+        "h264_nest_compatible_baseline_profile": ("profile-level-id=42001f" in video or "profile-level-id=42e01f" in video),
+        "data_channel_present": "webrtc-datachannel" in application,
+        "bundle_three_mids": bool(re.search(r"(?m)^a=group:BUNDLE\s+\S+\s+\S+\s+\S+$", sdp)),
+        "offer_ends_with_newline": sdp.endswith("\r\n") or sdp.endswith("\n"),
+    }
+    return checks
+
+
 async def main():
     os.makedirs("artifacts", exist_ok=True)
 
-    video_caps = RTCRtpSender.getCapabilities("video")
-    h264 = [c for c in video_caps.codecs if c.mimeType.lower() == "video/h264"]
+    h264 = [c for c in RTCRtpSender.getCapabilities("video").codecs if c.mimeType.lower() == "video/h264"]
     if not h264:
         raise RuntimeError("Runtime exposes no H264 WebRTC codec capability")
 
-    config = RTCConfiguration(
-        iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])]
-    )
+    config = RTCConfiguration(iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])])
     receiver_pc = RTCPeerConnection(config)
     sender_pc = RTCPeerConnection(config)
 
     decoded_future = asyncio.get_running_loop().create_future()
     data_open_future = asyncio.get_running_loop().create_future()
 
-    # Build an offer with the same broad ingredients required by Nest:
-    # receive-oriented audio/video plus a WebRTC data channel.
     receiver_pc.addTransceiver("audio", direction="recvonly")
     video_transceiver = receiver_pc.addTransceiver("video", direction="recvonly")
     video_transceiver.setCodecPreferences(h264)
@@ -98,14 +113,12 @@ async def main():
                 image_path = "artifacts/decoded-frame.png"
                 frame.to_image().save(image_path)
                 if not decoded_future.done():
-                    decoded_future.set_result(
-                        {
-                            "width": frame.width,
-                            "height": frame.height,
-                            "format": str(frame.format.name),
-                            "image_path": image_path,
-                        }
-                    )
+                    decoded_future.set_result({
+                        "width": frame.width,
+                        "height": frame.height,
+                        "format": str(frame.format.name),
+                        "image_path": image_path,
+                    })
             except Exception as exc:
                 if not decoded_future.done():
                     decoded_future.set_exception(exc)
@@ -114,9 +127,14 @@ async def main():
 
     offer = await receiver_pc.createOffer()
     await receiver_pc.setLocalDescription(offer)
-    local_offer = receiver_pc.localDescription
+    offer_sdp = receiver_pc.localDescription.sdp
 
-    await sender_pc.setRemoteDescription(local_offer)
+    nest_checks = validate_nest_offer(offer_sdp)
+    failed_contract_checks = [name for name, passed in nest_checks.items() if not passed]
+    if failed_contract_checks:
+        raise RuntimeError(f"Nest SDP contract failed: {failed_contract_checks}")
+
+    await sender_pc.setRemoteDescription(receiver_pc.localDescription)
     sender_pc.addTrack(AudioStreamTrack())
     sender_pc.addTrack(SyntheticVideoTrack())
 
@@ -135,49 +153,36 @@ async def main():
     except asyncio.TimeoutError:
         pass
 
-    offer_sdp = receiver_pc.localDescription.sdp
-    answer_sdp = sender_pc.localDescription.sdp
+    if not data_channel_open:
+        raise RuntimeError("WebRTC data channel did not open")
 
+    answer_sdp = sender_pc.localDescription.sdp
     stats = await receiver_pc.getStats()
     inbound_video = []
-    codecs = {}
     for stat in stats.values():
-        if getattr(stat, "type", None) == "codec":
-            codecs[stat.id] = {
-                "mimeType": getattr(stat, "mimeType", None),
-                "payloadType": getattr(stat, "payloadType", None),
-            }
         if getattr(stat, "type", None) == "inbound-rtp" and getattr(stat, "kind", None) == "video":
-            inbound_video.append(
-                {
-                    "packetsReceived": getattr(stat, "packetsReceived", None),
-                    "packetsLost": getattr(stat, "packetsLost", None),
-                    "codecId": getattr(stat, "codecId", None),
-                }
-            )
+            inbound_video.append({
+                "packetsReceived": getattr(stat, "packetsReceived", None),
+                "packetsLost": getattr(stat, "packetsLost", None),
+            })
 
     report = {
         "success": True,
+        "nest_contract": nest_checks,
+        "offer_sdp_sha256": hashlib.sha256(offer_sdp.encode()).hexdigest(),
         "h264_capability_count": len(h264),
         "h264_capabilities": [
-            {
-                "mimeType": c.mimeType,
-                "clockRate": c.clockRate,
-                "parameters": c.parameters,
-            }
+            {"mimeType": c.mimeType, "clockRate": c.clockRate, "parameters": c.parameters}
             for c in h264
         ],
         "offer_media_order": media_order(offer_sdp),
         "answer_media_order": media_order(answer_sdp),
-        "offer_h264_lines": h264_lines(offer_sdp),
-        "answer_h264_lines": h264_lines(answer_sdp),
         "offer_candidate_types": candidate_types(offer_sdp),
         "answer_candidate_types": candidate_types(answer_sdp),
         "data_channel_open": data_channel_open,
         "decoded_frame": decoded,
         "receiver_connection_state": receiver_pc.connectionState,
         "inbound_video_stats": inbound_video,
-        "codec_stats": codecs,
     }
 
     with open("artifacts/preflight-report.json", "w", encoding="utf-8") as f:
