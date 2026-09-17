@@ -9,6 +9,14 @@ on:
       - requirements-doorbell.txt
       - tests/test_nest_capture.py
       - .github/workflows/doorbell-capture-core-tests.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - nest_capture.py
+      - requirements-doorbell.txt
+      - tests/test_nest_capture.py
+      - .github/workflows/doorbell-capture-core-tests.yml
   workflow_dispatch:
 
 permissions:
