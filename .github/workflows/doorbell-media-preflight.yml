@@ -1,0 +1,44 @@
+name: Doorbell Media Preflight
+
+on:
+  push:
+    branches:
+      - doorbell-media-preflight
+  workflow_dispatch:
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Install system media packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -hide_banner -version
+          ffmpeg -hide_banner -decoders | grep -i h264 || true
+          ffmpeg -hide_banner -encoders | grep -i 264 || true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install WebRTC dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install aiortc av numpy pillow
+
+      - name: Run WebRTC H264 decode preflight
+        run: python doorbell_preflight.py
+
+      - name: Upload decoded frame and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: doorbell-media-preflight
+          path: artifacts/
+          if-no-files-found: warn
