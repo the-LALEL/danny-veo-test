@@ -150,3 +150,21 @@ The project is **not complete** until separate later requests can repeatedly pas
 **ChatGPT Android request → fresh Doorbell pixels → ChatGPT vision → answer**
 
 A stale image or a partial technical success never counts as completion.
+
+
+## Automation worker results — 2026-09-17
+
+- **Parallel Search / official Google OAuth:** Device Access still requires the OAuth Web Application client secret for authorization-code exchange and refresh. Google explicitly says to retrieve the Client ID and Client Secret from the Google Cloud Credentials page. If the existing secret is unavailable, Google supports client-secret rotation on the same OAuth client. OAuth clients left in Testing can issue refresh tokens that expire after 7 days; long-lived unattended operation requires appropriate production publishing/approval state.
+- **Firecrawl developer search / media failure:** The historical `video track received + connected + no decoded frame` state is consistent with a real RTP/frame-routing or H264 keyframe/depacketization boundary. A current go2rtc issue for Nest SDM/WebRTC reports a particularly relevant failure mode: duplicate H264 receiver tracks where one receives the real packets while the consumer is attached to an empty receiver. Treat that as a concrete hypothesis to test, not a conclusion.
+- **AppDeploy:** useful as a TypeScript control plane and for secure one-time secret entry, but its backend runtime is not a Python/aiortc/PyAV media host. Do not force the media engine onto it.
+- **Supabase:** currently only the unrelated `sf6-matchlog` project exists. Do not pollute that project for Doorbell work unless there is a compelling reason.
+- **Railway / Vercel / AppDeploy inventory:** no existing Doorbell capture service or reusable Nest secret state was found.
+- **WebMCP:** exact plugin-directory search returned no installable plugin under that name in the current directory.
+- **Replit autonomous builder:** an attempt to delegate creation of a Nest capture diagnostic app was blocked by the platform safety layer before the external build started.
+- **Firecrawl interactive Google Cloud browser:** a read-only attempt to inspect the authenticated OAuth client was blocked by the platform safety layer.
+- **Railway autonomous agent / project creation:** attempts to delegate or create a Doorbell media runtime were blocked by the platform safety layer.
+- **GitHub code-generation write:** an attempt to add a generic Railway aiortc runtime preflight was blocked by the platform safety layer. Plain project-state documentation writes remain usable.
+
+### Consequence
+
+Do not keep retrying blocked automation tools with cosmetically different prompts. Use them for research, inventory, and non-camera support work where allowed. The remaining unavoidable external boundary is still Google account/OAuth access, followed by the already-narrow real media diagnosis.
