@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture one fresh frame from a Google Nest Doorbell via Device Access WebRTC.
+"""Capture one current-session frame from a Google Nest Doorbell via Device Access WebRTC.
 
 This module intentionally stops at the capture boundary. It does not implement
 ChatGPT delivery, artifact encryption, databases, queues, or persistent hosting.
@@ -48,6 +48,36 @@ def iso(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
+def resolve_request_id(raw: str | None = None) -> str:
+    """Return a canonical UUID request ID or reject unsafe/un-correlatable input."""
+    value = (raw if raw is not None else os.environ.get("DOORBELL_REQUEST_ID", "")).strip()
+    if not value:
+        return str(uuid.uuid4())
+    try:
+        return str(uuid.UUID(value))
+    except (ValueError, AttributeError) as exc:
+        raise CaptureError(
+            "request_validation",
+            "INVALID_REQUEST_ID",
+            "DOORBELL_REQUEST_ID must be a UUID",
+        ) from exc
+
+
+def _secure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def _secure_file(path: Path) -> None:
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
 def media_order(sdp: str) -> list[str]:
     return [line[2:].split()[0] for line in sdp.splitlines() if line.startswith("m=")]
 
@@ -75,7 +105,9 @@ def validate_nest_offer(sdp: str) -> dict[str, bool]:
     audio_rtpmap = [
         line for line in audio.splitlines() if line.lower().startswith("a=rtpmap:")
     ]
-    audio_only_opus = bool(audio_rtpmap) and all(" opus/48000" in line.lower() for line in audio_rtpmap)
+    audio_only_opus = bool(audio_rtpmap) and all(
+        " opus/48000" in line.lower() for line in audio_rtpmap
+    )
 
     return {
         "media_order_audio_video_application": media_order(sdp) == ["audio", "video", "application"],
@@ -95,14 +127,7 @@ def validate_nest_offer(sdp: str) -> dict[str, bool]:
 
 
 def normalize_nest_answer_sdp(answer_sdp: str) -> tuple[str, int, int]:
-    """Normalize malformed blank-foundation ICE candidates observed from Nest.
-
-    A prior real Nest session produced ICE candidate lines whose foundation was
-    empty, which aiortc rejected. Give those UDP candidates a synthetic local
-    foundation. Non-UDP candidates are dropped to preserve the previously
-    successful compatibility behavior.
-    """
-
+    """Normalize malformed blank-foundation ICE candidates observed from Nest."""
     normalized = 0
     dropped_non_udp = 0
     output: list[str] = []
@@ -196,7 +221,7 @@ def _oauth_token_request(form: dict[str, str], timeout: int = 20) -> tuple[int, 
 
 
 def probe_oauth_client(client_id: str, client_secret: str) -> bool:
-    """Verify that Google accepts a client ID / secret pair without Nest consent."""
+    """Check whether Google gets past client authentication to grant validation."""
     status, body = _oauth_token_request(
         {
             "client_id": client_id,
@@ -377,7 +402,7 @@ async def capture_one_frame(output_dir: Path, request_id: str) -> dict[str, Any]
         ) from exc
 
     request_started = utc_now()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _secure_dir(output_dir)
 
     access_token, token_source = get_access_token()
     device_name, device_source = resolve_device_name(access_token)
@@ -469,6 +494,7 @@ async def capture_one_frame(output_dir: Path, request_id: str) -> dict[str, Any]
                 "nest_api", "NO_MEDIA_SESSION_ID", "GenerateWebRtcStream returned no mediaSessionId"
             )
 
+        fixed_answer, normalized_candidates, dropped_non_udp = normalize_nest_answer_sdp(answer_sdp)
         if (utc_now() - command_completed_at).total_seconds() >= 25:
             raise CaptureError(
                 "webrtc_negotiation",
@@ -476,7 +502,6 @@ async def capture_one_frame(output_dir: Path, request_id: str) -> dict[str, Any]
                 "Nest answerSdp was not applied promptly enough",
             )
 
-        fixed_answer, normalized_candidates, dropped_non_udp = normalize_nest_answer_sdp(answer_sdp)
         try:
             await pc.setRemoteDescription(RTCSessionDescription(sdp=fixed_answer, type="answer"))
             answer_applied_at = utc_now()
@@ -502,13 +527,15 @@ async def capture_one_frame(output_dir: Path, request_id: str) -> dict[str, Any]
             raise CaptureError(
                 "freshness",
                 "FRAME_PREDATES_CAPTURE_REQUEST",
-                "Decoded frame does not prove post-request freshness",
+                "Decoded frame does not prove a post-request live-session observation",
             )
 
         image_path = output_dir / f"{request_id}.png"
         try:
             frame.to_image().save(image_path, format="PNG")
+            _secure_file(image_path)
         except Exception as exc:
+            image_path.unlink(missing_ok=True)
             raise CaptureError(
                 "image_creation", "IMAGE_SAVE_FAILED", "Decoded video frame could not be saved as PNG"
             ) from exc
@@ -525,7 +552,8 @@ async def capture_one_frame(output_dir: Path, request_id: str) -> dict[str, Any]
                 "answer_applied_at": iso(answer_applied_at),
                 "frame_received_at": iso(frame_received_at),
                 "capture_completed_at": iso(completed_at),
-                "frame_after_stream_request": frame_received_at > command_requested_at,
+                "fresh_live_session_observation": frame_received_at > command_requested_at,
+                "camera_sensor_capture_time_proven": False,
             },
             "capture": {
                 "image_path": str(image_path),
@@ -560,13 +588,30 @@ async def capture_one_frame(output_dir: Path, request_id: str) -> dict[str, Any]
 
 
 def _write_result(path: Path, result: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    _secure_dir(path.parent)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    _secure_file(temp)
+    temp.replace(path)
+    _secure_file(path)
 
 
 async def async_main(output_dir: Path) -> int:
-    request_id = os.environ.get("DOORBELL_REQUEST_ID", "").strip() or str(uuid.uuid4())
+    try:
+        request_id = resolve_request_id()
+    except CaptureError as exc:
+        print(json.dumps({"success": False, "error": exc.as_dict()}), file=sys.stderr)
+        return 2
+
+    _secure_dir(output_dir)
     result_path = output_dir / f"{request_id}.json"
+    image_path = output_dir / f"{request_id}.png"
+
+    # A repeated request ID must never make an old image look like the result of
+    # a new failed capture. Remove correlated remnants before attempting Nest.
+    result_path.unlink(missing_ok=True)
+    image_path.unlink(missing_ok=True)
+
     try:
         result = await capture_one_frame(output_dir, request_id)
         _write_result(result_path, result)
@@ -584,6 +629,7 @@ async def async_main(output_dir: Path) -> int:
         )
         return 0
     except CaptureError as exc:
+        image_path.unlink(missing_ok=True)
         failure = {
             "success": False,
             "request_id": request_id,
@@ -594,6 +640,7 @@ async def async_main(output_dir: Path) -> int:
         print(json.dumps(failure), file=sys.stderr)
         return 2
     except Exception:
+        image_path.unlink(missing_ok=True)
         failure = {
             "success": False,
             "request_id": request_id,
@@ -610,6 +657,10 @@ async def async_main(output_dir: Path) -> int:
 
 
 def main() -> int:
+    # Camera pixels and result metadata are sensitive. Explicit chmod calls below
+    # are the primary protection; the restrictive umask also covers temporary files.
+    os.umask(0o077)
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output-dir",
@@ -619,7 +670,7 @@ def main() -> int:
     parser.add_argument(
         "--probe-oauth-client",
         action="store_true",
-        help="Validate NEST_CLIENT_ID/NEST_CLIENT_SECRET without calling the Nest API",
+        help="Check NEST_CLIENT_ID/NEST_CLIENT_SECRET without calling the Nest API",
     )
     args = parser.parse_args()
 
