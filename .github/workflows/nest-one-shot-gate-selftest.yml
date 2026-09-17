@@ -1,0 +1,29 @@
+name: Nest One-Shot Credential Gate Self-Test
+
+on:
+  push:
+    branches: [doorbell-media-preflight]
+    paths:
+      - cloudshell_nest_one_shot_gate.sh
+      - .github/workflows/nest-one-shot-gate-selftest.yml
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: bash -n cloudshell_nest_one_shot_gate.sh
+      - name: Confirm audited media pin
+        run: grep -F 'MEDIA_REF="f3f8806b97a86ac704425d54ac99465d30071cbc"' cloudshell_nest_one_shot_gate.sh
+      - name: Confirm fail-closed credential gate
+        run: |
+          grep -F 'CLIENT_SECRET_MISMATCH' cloudshell_nest_one_shot_gate.sh
+          grep -F 'error == "invalid_grant"' cloudshell_nest_one_shot_gate.sh
+          grep -F 'resp.status_code == 401 or error == "invalid_client"' cloudshell_nest_one_shot_gate.sh
+      - name: Confirm no persistence layer in one-shot path
+        run: |
+          ! grep -F 'secretmanager' cloudshell_nest_one_shot_gate.sh
+          ! grep -F 'refresh_token' cloudshell_nest_one_shot_gate.sh
+          ! grep -F 'NEST_CLIENT_SECRET=' cloudshell_nest_one_shot_gate.sh | grep -F '>'
