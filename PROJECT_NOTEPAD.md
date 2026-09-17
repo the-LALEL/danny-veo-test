@@ -282,3 +282,13 @@ Do not get stuck on a single provider. Prefer a worker decomposition:
 - image return → Gmail remains a concrete candidate.
 
 Only introduce a new worker when it eliminates a real blocker or shortens the critical path.
+
+
+## Execution discipline — user directive
+
+- Use available plugins and connected workers proactively to reduce manual work and parallelize execution.
+- Do not confuse healthy uncertainty with repeatedly reopening settled decisions.
+- Once a route is supported well enough to act, execute it.
+- Reconsider the route only when new evidence materially contradicts it or a concrete blocker requires a branch.
+- Do not keep comparing providers, architectures, or plugins after the critical path is known.
+- Prefer progress-producing experiments over additional meta-analysis.
