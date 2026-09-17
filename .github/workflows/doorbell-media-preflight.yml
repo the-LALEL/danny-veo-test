@@ -35,6 +35,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install aiortc av numpy pillow
 
+      - name: Validate real Nest capture client
+        run: python -m py_compile nest_capture.py
+
       - name: Run WebRTC H264 decode preflight
         run: python doorbell_preflight.py
 
