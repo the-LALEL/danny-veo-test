@@ -63,6 +63,8 @@ def validate_nest_offer(sdp: str):
     audio = sections.get("audio", "")
     video = sections.get("video", "")
     application = sections.get("application", "")
+    bundle_lines = [line for line in sdp.splitlines() if line.startswith("a=group:BUNDLE ")]
+    bundle_mids = bundle_lines[0].split()[1:] if len(bundle_lines) == 1 else []
     checks = {
         "media_order_audio_video_application": media_order(sdp) == ["audio", "video", "application"],
         "audio_recvonly": bool(re.search(r"(?m)^a=recvonly$", audio)),
@@ -72,7 +74,7 @@ def validate_nest_offer(sdp: str):
         "h264_packetization_mode_1": "packetization-mode=1" in video,
         "h264_nest_compatible_baseline_profile": ("profile-level-id=42001f" in video or "profile-level-id=42e01f" in video),
         "data_channel_present": "webrtc-datachannel" in application,
-        "bundle_three_mids": bool(re.search(r"(?m)^a=group:BUNDLE\s+\S+\s+\S+\s+\S+$", sdp)),
+        "bundle_three_mids": len(bundle_mids) == 3,
         "offer_ends_with_newline": sdp.endswith("\r\n") or sdp.endswith("\n"),
     }
     return checks
