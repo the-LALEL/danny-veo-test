@@ -1,11 +1,6 @@
 name: Doorbell Live Capture Smoke
 
 on:
-  push:
-    branches:
-      - doorbell-capture-core
-    paths:
-      - .github/workflows/doorbell-live-smoke.yml
   workflow_dispatch:
 
 permissions:
