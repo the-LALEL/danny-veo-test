@@ -100,6 +100,8 @@ class Probe:
         self.datagram_classes: Counter[str] = Counter()
         self.receiver_registrations: list[dict[str, Any]] = []
         self.rtp_by_payload_type: Counter[int] = Counter()
+        self.rtp_routed_by_payload_type: Counter[int] = Counter()
+        self.rtp_dropped_by_payload_type: Counter[int] = Counter()
         self.rtp_by_ssrc: Counter[int] = Counter()
         self.rtp_routed = 0
         self.rtp_dropped = 0
@@ -158,10 +160,13 @@ class Probe:
             probe.rtp_by_payload_type[int(packet.payload_type)] += 1
             probe.rtp_by_ssrc[int(packet.ssrc)] += 1
             receiver = probe._orig_route_rtp(router, packet)
+            pt = int(packet.payload_type)
             if receiver is None:
                 probe.rtp_dropped += 1
+                probe.rtp_dropped_by_payload_type[pt] += 1
             else:
                 probe.rtp_routed += 1
+                probe.rtp_routed_by_payload_type[pt] += 1
             return receiver
 
         def normalize_answer_wrapper(answer_sdp: str) -> tuple[str, int, int]:
@@ -179,8 +184,36 @@ class Probe:
         RtpRouter.route_rtp = self._orig_route_rtp
         nest_capture.normalize_nest_answer_sdp = self._orig_normalize_answer
 
+    def classification(self) -> str:
+        video_pts = {
+            int(item["payload_type"])
+            for item in self.answer_video_codecs
+            if str(item.get("codec", "")).upper().startswith("H264/")
+        }
+        video_total = sum(self.rtp_by_payload_type[pt] for pt in video_pts)
+        video_routed = sum(self.rtp_routed_by_payload_type[pt] for pt in video_pts)
+        video_dropped = sum(self.rtp_dropped_by_payload_type[pt] for pt in video_pts)
+
+        if video_routed > 0:
+            return "video_rtp_routed_but_no_frame_or_frame_succeeded"
+        if video_dropped > 0:
+            return "video_rtp_arrived_but_router_dropped"
+        if video_total == 0 and (self.rtp_routed + self.rtp_dropped) > 0:
+            return "rtp_arrived_but_no_h264_video_payload_seen"
+        if self.datagram_classes.get("srtp_or_srtcp", 0) > 0:
+            return "srtp_like_datagrams_seen_but_no_parseable_rtp"
+        if self.ice_datagrams > 0:
+            return "ice_or_dtls_activity_without_srtp_media"
+        return "no_inbound_ice_datagrams_observed"
+
     def report(self) -> dict[str, Any]:
+        video_pts = {
+            int(item["payload_type"])
+            for item in self.answer_video_codecs
+            if str(item.get("codec", "")).upper().startswith("H264/")
+        }
         return {
+            "classification": self.classification(),
             "transport": {
                 "ice_datagrams": self.ice_datagrams,
                 "ice_bytes": self.ice_bytes,
@@ -198,6 +231,20 @@ class Probe:
                 "by_payload_type": {
                     str(k): v for k, v in sorted(self.rtp_by_payload_type.items())
                 },
+                "routed_by_payload_type": {
+                    str(k): v for k, v in sorted(self.rtp_routed_by_payload_type.items())
+                },
+                "dropped_by_payload_type": {
+                    str(k): v for k, v in sorted(self.rtp_dropped_by_payload_type.items())
+                },
+                "video_payload_types": sorted(video_pts),
+                "video_packets": sum(self.rtp_by_payload_type[pt] for pt in video_pts),
+                "video_routed_packets": sum(
+                    self.rtp_routed_by_payload_type[pt] for pt in video_pts
+                ),
+                "video_router_dropped_packets": sum(
+                    self.rtp_dropped_by_payload_type[pt] for pt in video_pts
+                ),
                 "distinct_ssrcs": len(self.rtp_by_ssrc),
             },
         }
