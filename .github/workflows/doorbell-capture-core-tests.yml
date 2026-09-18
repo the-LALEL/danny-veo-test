@@ -34,6 +34,6 @@ jobs:
       - name: Install capture dependencies
         run: python -m pip install -r requirements-doorbell.txt
       - name: Compile
-        run: python -m py_compile nest_capture.py tests/test_nest_capture.py
+        run: python -m py_compile nest_capture.py doorbell_packet_probe.py tests/test_nest_capture.py tests/test_doorbell_packet_probe.py
       - name: Unit tests
         run: python -m unittest discover -s tests -v
