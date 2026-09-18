@@ -69,3 +69,28 @@ No ChatGPT transport, database, queue, public image URL, encryption envelope, or
 `.github/workflows/doorbell-live-smoke.yml` is manual-only. It expects a repository secret named `NEST_BRIDGE_CONFIG`, attempts one real capture, uploads nothing, and deletes any camera pixels before the ephemeral runner exits.
 
 The repository does not currently expose that secret to the workflow. Therefore the present live-smoke result is `BRIDGE_CONFIG_NOT_SUPPLIED`; no Nest API request is made in that state.
+
+
+## Sanitized media packet probe
+
+`doorbell_packet_probe.py` is now the preferred diagnostic if a real capture again reaches
+the media stage without producing a frame.
+
+It instruments the same capture path and records only:
+
+- coarse inbound ICE/DTLS/SRTP-like datagram counts;
+- remote video codec payload types and H264 profile metadata;
+- receiver payload-type registrations;
+- parsed RTP packet counts by payload type;
+- routed versus router-dropped RTP counts;
+- H264-video-specific routed/dropped packet counts;
+- an automatic deepest-boundary classification.
+
+It deliberately does **not** retain or print OAuth credentials, SDP candidate addresses,
+IP addresses, media payload bytes, or camera pixels. Any temporary PNG created after a
+successful decode is deleted with the temporary probe directory.
+
+The manual workflow `.github/workflows/doorbell-media-probe.yml` uses the same
+`NEST_BRIDGE_CONFIG` secret contract as the live smoke workflow and prints only the
+sanitized JSON diagnostic. The probe implementation and its tests compile and pass in
+GitHub Actions on Python 3.12 with the pinned media runtime.
