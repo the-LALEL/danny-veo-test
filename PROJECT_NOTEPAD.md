@@ -320,3 +320,29 @@ Next action is to use the existing Google Auth Platform Web OAuth client and add
 
 - Fresh plugin-directory searches for Browserbase/Playwright/Google Cloud/Cloud Shell/browser MCP did not surface a newly connected Google Cloud operator.
 - Current usable browser operators remain Opera Browser Connector and TinyFish; Opera is disconnected and TinyFish's authenticated Google-console workflow is platform-blocked.
+
+
+## Packet probe implementation complete — 2026-09-17 evening
+
+Implemented and committed on `doorbell-capture-core`:
+
+- `doorbell_packet_probe.py`
+- `.github/workflows/doorbell-media-probe.yml`
+- `tests/test_doorbell_packet_probe.py`
+
+The probe now records, without retaining media payloads or secrets:
+- inbound transport/datagram counts;
+- Nest answer video payload types and H264 profile metadata;
+- aiortc receiver payload-type registrations;
+- RTP counts by payload type;
+- routed vs router-dropped RTP;
+- H264-video-specific routed/dropped counts;
+- an automatic boundary classification.
+
+CI validation:
+- GitHub Actions run `35291147196`: success.
+- Follow-up probe-classification validation run `35291220476`: success.
+
+This removes a future debugging round trip. After OAuth is restored, run the real capture;
+if it fails at media receive, run the sanitized packet probe immediately and patch only the
+classified layer.
