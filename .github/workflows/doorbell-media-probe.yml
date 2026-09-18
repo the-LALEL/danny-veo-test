@@ -1,0 +1,80 @@
+name: Doorbell Media Packet Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install capture dependencies
+        run: python -m pip install -r requirements-doorbell.txt
+      - name: Run sanitized Nest media probe
+        env:
+          NEST_BRIDGE_CONFIG: ${{ secrets.NEST_BRIDGE_CONFIG }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          raw = os.environ.get("NEST_BRIDGE_CONFIG", "")
+          if not raw.strip():
+              print(json.dumps({
+                  "success": False,
+                  "error": {
+                      "stage": "configuration",
+                      "code": "BRIDGE_CONFIG_NOT_SUPPLIED",
+                      "message": "NEST_BRIDGE_CONFIG is unavailable; no Nest API request was made",
+                  },
+              }))
+              raise SystemExit(2)
+
+          try:
+              config = json.loads(raw)
+          except Exception:
+              print(json.dumps({
+                  "success": False,
+                  "error": {
+                      "stage": "configuration",
+                      "code": "BRIDGE_CONFIG_INVALID_JSON",
+                      "message": "NEST_BRIDGE_CONFIG is not valid JSON",
+                  },
+              }))
+              raise SystemExit(2)
+
+          if not isinstance(config, dict):
+              raise SystemExit("Bridge configuration must be an object")
+
+          mapping = {
+              "client_id": "NEST_CLIENT_ID",
+              "client_secret": "NEST_CLIENT_SECRET",
+              "refresh_token": "NEST_REFRESH_TOKEN",
+              "device_name": "NEST_DEVICE_NAME",
+              "enterprise_id": "NEST_ENTERPRISE_ID",
+              "device_access_project_id": "NEST_DEVICE_ACCESS_PROJECT_ID",
+          }
+
+          env = os.environ.copy()
+          env.pop("NEST_BRIDGE_CONFIG", None)
+          for source, target in mapping.items():
+              value = config.get(source)
+              if isinstance(value, str) and value.strip():
+                  env[target] = value.strip()
+
+          completed = subprocess.run(
+              [sys.executable, "doorbell_packet_probe.py"],
+              env=env,
+              check=False,
+          )
+          raise SystemExit(completed.returncode)
+          PY
