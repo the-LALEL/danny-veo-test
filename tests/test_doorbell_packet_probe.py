@@ -44,7 +44,17 @@ class DoorbellPacketProbeTests(unittest.TestCase):
         probe.ice_max_datagram_bytes = 500
         probe.datagram_classes["dtls"] = 1
         probe.datagram_classes["srtp_or_srtcp"] = 3
+        probe.answer_video_codecs = [
+            {
+                "payload_type": 98,
+                "codec": "H264/90000",
+                "profile_level_id": "64001f",
+                "packetization_mode": "1",
+            }
+        ]
         probe.rtp_by_payload_type[98] = 7
+        probe.rtp_routed_by_payload_type[98] = 6
+        probe.rtp_dropped_by_payload_type[98] = 1
         probe.rtp_by_ssrc[1234] = 7
         probe.rtp_routed = 6
         probe.rtp_dropped = 1
@@ -54,6 +64,15 @@ class DoorbellPacketProbeTests(unittest.TestCase):
         self.assertEqual(report["rtp"]["routed_packets"], 6)
         self.assertEqual(report["rtp"]["router_dropped_packets"], 1)
         self.assertEqual(report["rtp"]["by_payload_type"], {"98": 7})
+        self.assertEqual(report["rtp"]["routed_by_payload_type"], {"98": 6})
+        self.assertEqual(report["rtp"]["dropped_by_payload_type"], {"98": 1})
+        self.assertEqual(report["rtp"]["video_packets"], 7)
+        self.assertEqual(report["rtp"]["video_routed_packets"], 6)
+        self.assertEqual(report["rtp"]["video_router_dropped_packets"], 1)
+        self.assertEqual(
+            report["classification"],
+            "video_rtp_routed_but_no_frame_or_frame_succeeded",
+        )
         self.assertEqual(report["rtp"]["distinct_ssrcs"], 1)
         self.assertNotIn("payload", report["transport"])
 
